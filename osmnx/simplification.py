@@ -6,8 +6,10 @@ import geopandas as gpd
 import networkx as nx
 from shapely.geometry import LineString
 from shapely.geometry import MultiPolygon
+from shapely.geometry import MultiLineString
 from shapely.geometry import Point
 from shapely.geometry import Polygon
+from shapely.ops import linemerge
 
 from . import stats
 from . import utils
@@ -316,6 +318,75 @@ def simplify_graph(G, strict=True, remove_rings=True):
     )
     utils.log(msg)
     return G
+
+
+def simplify_graph_modified(G, strict=True, remove_rings=True):
+    # define edge segment attributes to sum upon edge simplification
+    attrs_to_sum = {"length", "travel_time"}
+
+    # make a copy to not mutate original graph object caller passed in
+    G = G.copy()
+    initial_node_count = len(G)
+    initial_edge_count = len(G.edges)
+    all_nodes_to_remove = []
+    all_edges_to_add = []
+    for path in _get_paths_to_simplify(G, strict=strict):
+        path_attributes = dict()
+        for u, v in zip(path[:-1], path[1:]):
+            edge_count = G.number_of_edges(u, v)
+            if edge_count != 1:
+                utils.log(f"Found {edge_count} edges between {u} and {v} when simplifying")
+            edge_data = G.edges[u, v, 0]
+            # edge_data['geometry'] = list(edge_data['geometry'].coords) # -> new code line
+            for attr in edge_data:
+                if attr in path_attributes:
+                    path_attributes[attr].append(edge_data[attr])
+                else:
+                    path_attributes[attr] = [edge_data[attr]]
+            #list of lists to one list # -> new line
+            # path_attributes['geometry'] = sum(path_attributes['ge↨ometry'], [])
+
+        # consolidate the path's edge segments' attribute values
+        for attr in path_attributes:
+            if attr in attrs_to_sum:
+                path_attributes[attr] = sum(path_attributes[attr])
+            elif attr == 'geometry': # -> new code line
+                path_attributes[attr] = linemerge(MultiLineString(path_attributes[attr]))
+                # path_attributes[attr] = LineString([Point(node) for node in path_attributes[attr]])
+            elif len(set(path_attributes[attr])) == 1:
+                path_attributes[attr] = path_attributes[attr][0]
+            else:
+                path_attributes[attr] = list(set(path_attributes[attr]))
+
+        # construct the new consolidated edge's geometry for this path
+        # -> not required anymore 
+        #path_attributes["geometry"] = LineString(
+        #    [Point((G.nodes[node]["x"], G.nodes[node]["y"])) for node in path])
+        
+        # add the nodes and edge to their lists for processing at the end
+        all_nodes_to_remove.extend(path[1:-1])
+        all_edges_to_add.append(
+          {"origin": path[0], "destination": path[-1], "attr_dict": path_attributes})
+
+    # for each edge to add in the list we assembled, create a new edge between
+    # the origin and destination
+    for edge in all_edges_to_add:
+        G.add_edge(edge["origin"], edge["destination"], **edge["attr_dict"])
+
+    # finally remove all the interstitial nodes between the new edges
+    G.remove_nodes_from(set(all_nodes_to_remove))
+
+    if remove_rings:
+        # remove any connected components that form a self-contained ring
+        # without any endpoints
+        wccs = nx.weakly_connected_components(G)
+        nodes_in_rings = set()
+        for wcc in wccs:
+            if not any(_is_endpoint(G, n) for n in wcc):
+                nodes_in_rings.update(wcc)
+        G.remove_nodes_from(nodes_in_rings)
+    return G
+
 
 
 def consolidate_intersections(
