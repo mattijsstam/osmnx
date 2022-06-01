@@ -1,4 +1,4 @@
-geopandas>=0.10
+geopandas>=0.9
 matplotlib>=3.4
 networkx>=2.6
 numpy>=1.21
