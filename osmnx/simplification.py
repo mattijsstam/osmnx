@@ -395,7 +395,7 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
 
     Changes from simplify_graph_modified:
     - remove G.copy() function, this means that the original graph might be modified
-    - remove nodes from and add nodes to graph inside the for loop instead of after
+    - store nodes to remove in a set to prevent duplicates while looping
 
     Author: TAVM
     """
@@ -404,10 +404,9 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
     attrs_to_sum = {"length", "travel_time"}
 
     # make a copy to not mutate original graph object caller passed in
-    initial_node_count = len(G)
-    initial_edge_count = len(G.edges)
-    all_nodes_to_remove = []
+    all_nodes_to_remove = set()
     all_edges_to_add = []
+
     for path in _get_paths_to_simplify(G, strict=strict):
         path_attributes = dict()
         for u, v in zip(path[:-1], path[1:]):
@@ -415,14 +414,12 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
             if edge_count != 1:
                 utils.log(f"Found {edge_count} edges between {u} and {v} when simplifying")
             edge_data = G.edges[u, v, 0]
-            # edge_data['geometry'] = list(edge_data['geometry'].coords) # -> new code line
+
             for attr in edge_data:
                 if attr in path_attributes:
                     path_attributes[attr].append(edge_data[attr])
                 else:
                     path_attributes[attr] = [edge_data[attr]]
-            #list of lists to one list # -> new line
-            # path_attributes['geometry'] = sum(path_attributes['ge↨ometry'], [])
 
         # consolidate the path's edge segments' attribute values
         for attr in path_attributes:
@@ -430,18 +427,23 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
                 path_attributes[attr] = sum(path_attributes[attr])
             elif attr == 'geometry': # -> new code line
                 path_attributes[attr] = linemerge(MultiLineString(path_attributes[attr]))
-                # path_attributes[attr] = LineString([Point(node) for node in path_attributes[attr]])
             elif len(set(path_attributes[attr])) == 1:
                 path_attributes[attr] = path_attributes[attr][0]
             else:
                 path_attributes[attr] = list(set(path_attributes[attr]))
         
         # add the nodes and edge to their lists for processing at the end
-        # create a new edge between the origin and destination
-        G.add_edge(path[0], path[-1], **path_attributes)
+        all_nodes_to_remove.update(path[1:-1])
+        all_edges_to_add.append(
+          {"origin": path[0], "destination": path[-1], "attr_dict": path_attributes})
 
-        # remove the interstitial nodes between the new edges
-        G.remove_nodes_from(set(path[1:-1]))
+    # for each edge to add in the list we assembled, create a new edge between
+    # the origin and destination
+    for edge in all_edges_to_add:
+        G.add_edge(edge["origin"], edge["destination"], **edge["attr_dict"])
+
+    # finally remove all the interstitial nodes between the new edges
+    G.remove_nodes_from(all_nodes_to_remove)
 
     if remove_rings:
         # remove any connected components that form a self-contained ring
