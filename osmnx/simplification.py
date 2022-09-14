@@ -394,7 +394,6 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
     modified again to reduce memory consumption. Might run slower than the original.
 
     Changes from simplify_graph_modified:
-    - remove G.copy() function, this means that the original graph might be modified
     - store nodes to remove in a set to prevent duplicates while looping
 
     Author: TAVM
@@ -404,6 +403,9 @@ def simplify_graph_low_memory(G, strict=True, remove_rings=True):
     attrs_to_sum = {"length", "travel_time"}
 
     # make a copy to not mutate original graph object caller passed in
+    G = G.copy()
+    initial_node_count = len(G)
+    initial_edge_count = len(G.edges)
     all_nodes_to_remove = set()
     all_edges_to_add = []
 
